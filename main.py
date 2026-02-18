@@ -1,11 +1,10 @@
 import html
 import logging
-from datetime import datetime, timezone
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -14,47 +13,56 @@ app = FastAPI(title="GlitchTip → Telegram Bridge")
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
-LEVEL_EMOJI = {
-    "critical": "🚨",
-    "error": "🔴",
-    "warning": "⚠️",
-    "info": "ℹ️",
-    "debug": "🐛",
+# GlitchTip uses Rocket.Chat/Slack-style color codes for severity.
+COLOR_EMOJI = {
+    "#e52b50": "🔴",  # error
+    "#f4a836": "⚠️",  # warning
+    "#1e88e5": "ℹ️",  # info
+    "#757575": "🐛",  # debug
+}
+
+FIELD_EMOJI = {
+    "project":     "📦",
+    "environment": "🌍",
+    "server name": "🖥",
+    "release":     "🏷",
 }
 
 
+class AttachmentField(BaseModel):
+    title: str
+    value: str
+    short: bool = False
+
+
+class Attachment(BaseModel):
+    title: str = ""
+    title_link: str | None = None
+    text: str | None = None
+    color: str | None = None
+    fields: list[AttachmentField] = []
+
+
 class GlitchTipPayload(BaseModel):
-    project_name: str = "Unknown Project"
-    message: str = "No message provided"
-    culprit: str | None = None
-    issue_url: HttpUrl | None = None
-    level: str = "error"
-    timestamp: datetime | None = None
+    alias: str = "GlitchTip"
+    text: str = "GlitchTip Alert"
+    attachments: list[Attachment] = []
 
 
 def build_message(payload: GlitchTipPayload) -> str:
-    emoji = LEVEL_EMOJI.get(payload.level.lower(), "🔴")
-    level_label = payload.level.upper()
-    project = html.escape(payload.project_name)
-    message = html.escape(payload.message)
+    attachment = payload.attachments[0] if payload.attachments else Attachment()
 
-    ts = payload.timestamp or datetime.now(tz=timezone.utc)
-    time_str = ts.strftime("%Y-%m-%d %H:%M:%S UTC")
+    emoji = COLOR_EMOJI.get((attachment.color or "").lower(), "🔴")
+    title = html.escape(attachment.title or payload.text)
 
-    lines = [
-        f"{emoji} <b>New {level_label} in {project}</b>",
-        "",
-        f"📝 <b>Message:</b> <code>{message}</code>",
-    ]
+    lines = [f"{emoji} <b>{title}</b>"]
 
-    if payload.culprit:
-        culprit = html.escape(payload.culprit)
-        lines.append(f"📍 <b>Culprit:</b> <code>{culprit}</code>")
+    for field in attachment.fields:
+        field_emoji = FIELD_EMOJI.get(field.title.lower(), "•")
+        lines.append(f"{field_emoji} <b>{html.escape(field.title)}:</b> {html.escape(field.value)}")
 
-    lines.append(f"🕒 <b>Time:</b> {time_str}")
-
-    if payload.issue_url:
-        lines += ["", f'🔗 <a href="{payload.issue_url}">View Issue on GlitchTip</a>']
+    if attachment.title_link:
+        lines += ["", f'🔗 <a href="{html.escape(attachment.title_link)}">View Issue on GlitchTip</a>']
 
     return "\n".join(lines)
 
@@ -70,7 +78,6 @@ async def receive_webhook(
     chat_id: str,
     request: Request,
 ) -> JSONResponse:
-    # Parse body — return 422 on bad JSON or validation errors automatically via Pydantic.
     body = await request.json()
     payload = GlitchTipPayload.model_validate(body)
 
@@ -128,5 +135,9 @@ async def receive_webhook(
                 detail=f"Network error contacting Telegram: {exc}",
             ) from exc
 
-    logger.info("Forwarded %s event for project '%s'", payload.level, payload.project_name)
+    project = next(
+        (f.value for f in (payload.attachments[0].fields if payload.attachments else []) if f.title == "Project"),
+        "unknown",
+    )
+    logger.info("Forwarded alert for project '%s'", project)
     return JSONResponse({"status": "ok", "telegram_message_id": response.json().get("result", {}).get("message_id")})
