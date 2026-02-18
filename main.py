@@ -59,6 +59,11 @@ def build_message(payload: GlitchTipPayload) -> str:
     return "\n".join(lines)
 
 
+@app.get("/webhook/{bot_token}/{chat_id}")
+async def verify_webhook(bot_token: str, chat_id: str) -> JSONResponse:
+    return JSONResponse({"status": "ok"})
+
+
 @app.post("/webhook/{bot_token}/{chat_id}")
 async def receive_webhook(
     bot_token: str,
@@ -83,6 +88,28 @@ async def receive_webhook(
                     "disable_web_page_preview": True,
                 },
             )
+
+            # Telegram returns 400 when a group was upgraded to a supergroup.
+            # The response body contains the new chat ID — retry once with it.
+            if response.status_code == 400:
+                tg_body = response.json()
+                migrated_id = tg_body.get("parameters", {}).get("migrate_to_chat_id")
+                if migrated_id:
+                    logger.warning(
+                        "Chat %s migrated to supergroup %s, retrying with new ID.",
+                        chat_id,
+                        migrated_id,
+                    )
+                    response = await client.post(
+                        url,
+                        json={
+                            "chat_id": migrated_id,
+                            "text": message,
+                            "parse_mode": "HTML",
+                            "disable_web_page_preview": True,
+                        },
+                    )
+
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             logger.error(
