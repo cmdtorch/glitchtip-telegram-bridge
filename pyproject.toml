@@ -1,0 +1,18 @@
+[project]
+name = "glitchtip-telegram-bridge"
+version = "0.1.0"
+description = "A bridge between Glitchtip and Telegram for real-time error notifications."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "httpx>=0.28",
+    "pydantic>=2.10",
+]
+
+[project.scripts]
+start = "uvicorn main:app --host 0.0.0.0 --port 8000"
+
+[tool.uv]
+dev-dependencies = []
