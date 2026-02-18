@@ -24,9 +24,10 @@ COLOR_EMOJI = {
 FIELD_EMOJI = {
     "project":     "📦",
     "environment": "🌍",
-    "server name": "🖥",
     "release":     "🏷",
 }
+
+SKIP_FIELDS = {"server name"}
 
 
 class AttachmentField(BaseModel):
@@ -58,6 +59,8 @@ def build_message(payload: GlitchTipPayload) -> str:
     lines = [f"{emoji} <b>{title}</b>"]
 
     for field in attachment.fields:
+        if field.title.lower() in SKIP_FIELDS:
+            continue
         field_emoji = FIELD_EMOJI.get(field.title.lower(), "•")
         lines.append(f"{field_emoji} <b>{html.escape(field.title)}:</b> {html.escape(field.value)}")
 
